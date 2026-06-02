@@ -1,0 +1,12 @@
+{
+  "name": "unit-converter-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup:api": "sh scripts/setup-local-api.sh",
+    "dev": "python3 api/server.py --host 127.0.0.1 --port 5173",
+    "api": "python3 api/server.py",
+    "check:api": "python3 -m py_compile api/server.py"
+  }
+}

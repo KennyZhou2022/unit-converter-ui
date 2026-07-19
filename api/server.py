@@ -45,7 +45,40 @@ except Exception as error:  # pragma: no cover - exercised by environment setup.
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 INDEX_PATH = ROOT_DIR / "index.html"
+VERSION_PATH = ROOT_DIR / "VERSION"
 APP_VERSION = (ROOT_DIR / "VERSION").read_text(encoding="utf-8").strip()
+MAX_REQUEST_BODY_BYTES = 16 * 1024
+MAX_VALUE_LENGTH = 128
+MAX_DECIMAL_DIGITS = 100
+MAX_DECIMAL_EXPONENT = 1000
+MAX_UNIT_LENGTH = 240
+REQUEST_TIMEOUT_SECONDS = 10
+DECIMAL_INPUT_PATTERN = re.compile(
+    r"^[+-]?(?P<mantissa>(?:\d+\.?\d*|\.\d+))(?:[eE](?P<exponent>[+-]?\d+))?$"
+)
+PUBLIC_STATIC_ROOTS = (ROOT_DIR / "public", ROOT_DIR / "src")
+PUBLIC_STATIC_SUFFIXES = {
+    ".css",
+    ".gif",
+    ".ico",
+    ".jpeg",
+    ".jpg",
+    ".js",
+    ".png",
+    ".svg",
+    ".ttf",
+    ".webp",
+    ".woff",
+    ".woff2",
+}
+
+
+class RequestValidationError(ValueError):
+    def __init__(self, status: HTTPStatus, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
 
 DEFAULT_PAIRS = {
     "length": ("meter (m)", "foot (ft)"),
@@ -76,6 +109,10 @@ DEFAULT_PAIRS = {
 
 class UnitConverterRequestHandler(BaseHTTPRequestHandler):
     server_version = f"UnitConverterUI/{APP_VERSION}"
+
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(REQUEST_TIMEOUT_SECONDS)
 
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -109,42 +146,49 @@ class UnitConverterRequestHandler(BaseHTTPRequestHandler):
 
         if not self._require_package():
             return
-        payload = self._read_json()
-        value = str(payload.get("value", "")).strip()
-        from_unit = str(payload.get("fromUnit", "")).strip()
-        to_unit = str(payload.get("toUnit", "")).strip()
-
-        if not value or not from_unit or not to_unit:
-            self._write_error(
-                HTTPStatus.BAD_REQUEST,
-                "INVALID_REQUEST",
-                "value, fromUnit, and toUnit are required.",
-            )
-            return
-
         try:
-            Decimal(value)
-        except InvalidOperation:
-            self._write_error(
-                HTTPStatus.BAD_REQUEST,
-                "INVALID_VALUE",
-                "Enter a decimal or scientific-notation number.",
-            )
+            payload = self._read_json()
+            value, from_unit, to_unit = validate_conversion_payload(payload)
+        except RequestValidationError as error:
+            if error.status == HTTPStatus.REQUEST_ENTITY_TOO_LARGE:
+                self.close_connection = True
+            self._write_error(error.status, error.code, error.message)
             return
 
         try:
             assert convert is not None
             result = convert(value, from_unit, to_unit)
-        except UnitNotFoundError as error:
-            self._write_error(HTTPStatus.NOT_FOUND, "UNIT_NOT_FOUND", str(error))
-        except IncompatibleUnitError as error:
-            self._write_error(HTTPStatus.UNPROCESSABLE_ENTITY, "INCOMPATIBLE_UNITS", str(error))
-        except AmbiguousConversionError as error:
-            self._write_error(HTTPStatus.CONFLICT, "AMBIGUOUS_CONVERSION", str(error))
-        except ConversionNotFoundError as error:
-            self._write_error(HTTPStatus.UNPROCESSABLE_ENTITY, "CONVERSION_NOT_FOUND", str(error))
+        except UnitNotFoundError:
+            self._write_error(
+                HTTPStatus.NOT_FOUND,
+                "UNIT_NOT_FOUND",
+                "One or both selected units are unavailable.",
+            )
+        except IncompatibleUnitError:
+            self._write_error(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "INCOMPATIBLE_UNITS",
+                "The selected units cannot be converted.",
+            )
+        except AmbiguousConversionError:
+            self._write_error(
+                HTTPStatus.CONFLICT,
+                "AMBIGUOUS_CONVERSION",
+                "The selected conversion is ambiguous.",
+            )
+        except ConversionNotFoundError:
+            self._write_error(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "CONVERSION_NOT_FOUND",
+                "No conversion path is available for the selected units.",
+            )
         except Exception as error:  # pragma: no cover - defensive API boundary.
-            self._write_error(HTTPStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", str(error))
+            self.log_error("Unhandled conversion error: %r", error)
+            self._write_error(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "The conversion could not be completed.",
+            )
         else:
             self._write_json(
                 HTTPStatus.OK,
@@ -166,29 +210,43 @@ class UnitConverterRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.SERVICE_UNAVAILABLE,
             "UNIT_CONVERTER_UNAVAILABLE",
             (
-                "The unit-converter package is not installed. Run "
-                "`sh scripts/setup-local-api.sh` for local development."
+                "The conversion service is temporarily unavailable."
             ),
-            {"importError": UNIT_CONVERTER_IMPORT_ERROR},
         )
         return False
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        body = self.rfile.read(length).decode("utf-8")
+        validate_json_content_type(self.headers.get("Content-Type"))
+        length = validate_content_length(self.headers.get("Content-Length", "0"))
+        try:
+            body = self.rfile.read(length).decode("utf-8")
+        except (OSError, TimeoutError, UnicodeDecodeError) as error:
+            raise RequestValidationError(
+                HTTPStatus.BAD_REQUEST,
+                "INVALID_REQUEST",
+                "The request body could not be read.",
+            ) from error
         if not body:
             return {}
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
-            return {}
+            raise RequestValidationError(
+                HTTPStatus.BAD_REQUEST,
+                "INVALID_JSON",
+                "The request body must be a JSON object.",
+            ) from None
         if isinstance(payload, dict):
             return payload
-        return {}
+        raise RequestValidationError(
+            HTTPStatus.BAD_REQUEST,
+            "INVALID_JSON",
+            "The request body must be a JSON object.",
+        )
 
     def _serve_static(self, request_path: str) -> None:
         target = static_path_for(request_path)
-        if not target.exists() or not target.is_file():
+        if target is None or not target.exists() or not target.is_file():
             self._write_json(HTTPStatus.NOT_FOUND, {"error": {"code": "NOT_FOUND"}})
             return
 
@@ -228,6 +286,16 @@ class UnitConverterRequestHandler(BaseHTTPRequestHandler):
 
     def _send_common_headers(self, content_type: str) -> None:
         self.send_header("Content-Type", content_type)
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'none'; connect-src 'self'; "
+            "font-src 'self'; frame-ancestors 'none'; img-src 'self' data:; "
+            "object-src 'none'; script-src 'self'; style-src 'self'",
+        )
+        self.send_header("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -239,8 +307,85 @@ def health_payload() -> dict[str, Any]:
         "ok": UNIT_CONVERTER_IMPORT_ERROR is None,
         "uiVersion": APP_VERSION,
         "packageVersion": UNIT_CONVERTER_VERSION,
-        "importError": UNIT_CONVERTER_IMPORT_ERROR,
     }
+
+
+def validate_content_length(raw_value: str | None) -> int:
+    value = "0" if raw_value is None else raw_value
+    if not re.fullmatch(r"[0-9]+", value):
+        raise RequestValidationError(
+            HTTPStatus.BAD_REQUEST,
+            "INVALID_REQUEST",
+            "Content-Length must be a non-negative integer.",
+        )
+    length = int(value)
+    if length > MAX_REQUEST_BODY_BYTES:
+        raise RequestValidationError(
+            HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            "REQUEST_TOO_LARGE",
+            f"Request bodies are limited to {MAX_REQUEST_BODY_BYTES} bytes.",
+        )
+    return length
+
+
+def validate_json_content_type(raw_value: str | None) -> None:
+    content_type = (raw_value or "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        raise RequestValidationError(
+            HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+            "UNSUPPORTED_MEDIA_TYPE",
+            "Content-Type must be application/json.",
+        )
+
+
+def validate_conversion_payload(payload: dict[str, Any]) -> tuple[str, str, str]:
+    fields = (payload.get("value"), payload.get("fromUnit"), payload.get("toUnit"))
+    if not all(isinstance(field, str) for field in fields):
+        raise RequestValidationError(
+            HTTPStatus.BAD_REQUEST,
+            "INVALID_REQUEST",
+            "value, fromUnit, and toUnit must be strings.",
+        )
+
+    value, from_unit, to_unit = (field.strip() for field in fields)
+    if not value or not from_unit or not to_unit:
+        raise RequestValidationError(
+            HTTPStatus.BAD_REQUEST,
+            "INVALID_REQUEST",
+            "value, fromUnit, and toUnit are required.",
+        )
+    if len(from_unit) > MAX_UNIT_LENGTH or len(to_unit) > MAX_UNIT_LENGTH:
+        raise RequestValidationError(
+            HTTPStatus.BAD_REQUEST,
+            "INVALID_REQUEST",
+            "Unit labels are too long.",
+        )
+    if len(value) > MAX_VALUE_LENGTH:
+        raise _invalid_value_error()
+
+    match = DECIMAL_INPUT_PATTERN.fullmatch(value)
+    if not match:
+        raise _invalid_value_error()
+    digits = sum(character.isdigit() for character in match.group("mantissa"))
+    exponent = int(match.group("exponent") or "0")
+    if digits > MAX_DECIMAL_DIGITS or abs(exponent) > MAX_DECIMAL_EXPONENT:
+        raise _invalid_value_error()
+    try:
+        decimal_value = Decimal(value)
+    except InvalidOperation:
+        raise _invalid_value_error() from None
+    if not decimal_value.is_finite():
+        raise _invalid_value_error()
+
+    return value, from_unit, to_unit
+
+
+def _invalid_value_error() -> RequestValidationError:
+    return RequestValidationError(
+        HTTPStatus.BAD_REQUEST,
+        "INVALID_VALUE",
+        "Enter a finite decimal or scientific-notation number within supported limits.",
+    )
 
 
 def build_ui_catalog() -> dict[str, Any]:
@@ -469,23 +614,43 @@ def units_payload(category_slug: str) -> dict[str, Any]:
     return {"units": []}
 
 
-def static_path_for(request_path: str) -> Path:
+def static_path_for(request_path: str) -> Path | None:
     path = unquote(request_path.split("?", 1)[0])
     if path in ("", "/"):
         return INDEX_PATH
 
     normalized = path.lstrip("/")
-    candidate = (ROOT_DIR / normalized).resolve()
+    relative_path = Path(normalized)
+    if not normalized or any(part.startswith(".") for part in relative_path.parts):
+        return None
+    try:
+        candidate = (ROOT_DIR / relative_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
     try:
         candidate.relative_to(ROOT_DIR)
     except ValueError:
-        return INDEX_PATH
+        return None
 
-    if candidate.exists() and candidate.is_file():
+    if candidate in {INDEX_PATH, VERSION_PATH} and candidate.is_file():
         return candidate
-    if "." not in Path(normalized).name:
+    if (
+        candidate.suffix.lower() in PUBLIC_STATIC_SUFFIXES
+        and candidate.is_file()
+        and any(_is_relative_to(candidate, root) for root in PUBLIC_STATIC_ROOTS)
+    ):
+        return candidate
+    if "." not in relative_path.name and relative_path.parts[0] not in {"public", "src"}:
         return INDEX_PATH
-    return candidate
+    return None
+
+
+def _is_relative_to(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def parse_args() -> argparse.Namespace:

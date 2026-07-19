@@ -4,7 +4,9 @@ This repository contains the web UI for the `unit-converter` Python package.
 The backend package source is
 [KennyZhou2022/unit-converter](https://github.com/KennyZhou2022/unit-converter).
 
-Current UI release: `v1.0.0`. The release version is recorded in `VERSION`.
+Current UI release: `v1.1.0`. The release version is recorded in `VERSION`.
+See [CHANGELOG.md](CHANGELOG.md) and the
+[v1.1.0 release notes](release/v1.1.0.md) for user-facing changes.
 
 ## Product Direction
 
@@ -22,10 +24,9 @@ Useful reference patterns from UnitConverters.net:
 - Category grouping: Dimension, Mechanics, Heat, Fluids, Light, Electricity,
   Magnetism, Radiology, and Miscellaneous converter groups.
 
-The first UI version should prioritize supported conversions from the Python
-package. Unsupported web-site categories such as currency, case conversion,
-data storage, typography, or sound should stay hidden or explicitly marked as
-future work until a backend source exists.
+The UI prioritizes supported conversions from the Python package. Unsupported
+web-site categories such as currency, case conversion, data storage,
+typography, or sound stay out of the interface until a backend source exists.
 
 ## Backend Facts
 
@@ -60,10 +61,10 @@ Browser UI
 This keeps the UI independent from Python runtime details while preserving the
 backend package as the single source of truth for conversion behavior.
 
-The browser UI should not import or install the Python package directly. It
-should call HTTP endpoints with `fetch`/TanStack Query. The HTTP adapter is the
-Python runtime boundary: it installs `unit-converter`, imports the package, and
-exposes `/api/catalog`, `/api/units`, and `/api/convert` to the frontend.
+The browser UI does not import or install the Python package directly. It calls
+HTTP endpoints with `fetch`. The HTTP adapter is the Python runtime boundary: it
+installs `unit-converter`, imports the package, and exposes `/api/catalog`,
+`/api/units`, and `/api/convert` to the frontend.
 
 There are two reasonable deployment shapes:
 
@@ -94,7 +95,7 @@ The adapter code would then call the package normally:
 from unit_converter import convert, get_ui_unit_catalog, get_unit_catalog, list_units
 ```
 
-Current first implementation:
+Current implementation:
 
 - Build-free browser UI using native ES modules, HTML, and CSS.
 - Python standard-library HTTP adapter in `api/server.py`.
@@ -113,18 +114,24 @@ Target frontend stack for the next iteration:
 - Vitest + Testing Library for component tests.
 - Playwright for end-to-end conversion flows.
 
-## Suggested Repository Layout
+## Repository Layout
 
 ```text
 unit-converter-ui/
+  CHANGELOG.md
   VERSION
   api/
     server.py
+    test_server.py
     requirements.txt
     requirements.local.txt
   scripts/
+    check-version.mjs
     setup-local-api.sh
     dev.sh
+  release/
+    v1.0.0.md
+    v1.1.0.md
   vendor/
     wheels/
       unit_converter-1.3.0-py3-none-any.whl
@@ -140,10 +147,15 @@ unit-converter-ui/
       dom.js
     features/
       converter/
+        ConverterWorkspace.js
         ConverterForm.js
-        PopularConversions.js
         ResultPanel.js
         unitFilters.js
+      favorites/
+        FavoritesPanel.js
+        favoriteGroups.js
+        favoriteStorageSync.js
+        favoriteStore.js
       catalog/
         CatalogPage.js
         CategoryGrid.js
@@ -163,21 +175,29 @@ unit-converter-ui/
 
 ## Release Preparation
 
-The first UI release is `v1.0.0`.
+The prepared UI release is `v1.1.0`.
 
 - `VERSION` records the UI release version.
 - `package.json` uses the same release version.
-- The top navigation and browser title display `v1.0.0`.
+- The top navigation and browser title display `v1.1.0`.
 - `/api/health` exposes both the UI version and backend package version.
-- `release/v1.0.0.md` is ready to use as the GitHub Release note.
+- `release/v1.1.0.md` is ready to use as the GitHub Release note.
+- `npm run check:version` verifies the runtime version entry points agree.
 
-Suggested release flow:
+Release verification and tagging flow:
 
 ```bash
-python3 -m py_compile api/server.py
+npm run check:version
+npm test
+npm run test:api
+npm run check:api
 find src -name '*.js' -exec node --check {} \;
-git tag v1.0.0
+git tag -a v1.1.0 -m "Release v1.1.0"
+git push origin v1.1.0
 ```
+
+Create the tag only after the release commit is reviewed and the deployment
+target has passed its smoke test.
 
 ## Local Development
 
@@ -227,14 +247,13 @@ python api/server.py --host 0.0.0.0 --port "$PORT"
 
 ## Routes
 
-Initial routes:
+Application routes:
 
-- `/`: home screen with express converter, search, common conversions, and
-  category groups.
-- `/convert/:categorySlug/:converterSlug`: focused converter page such as
-  `/convert/dimension-converters/length`.
+- `/`: converter workspace with Category and Measure selection, From and To
+  units, Amount, result, and browser-local Favorites.
+- `/convert/:categorySlug/:converterSlug`: opens the workspace with a specific
+  converter such as `/convert/dimension-converters/length`.
 - `/units`: searchable supported-unit catalog.
-- `/units/:categorySlug`: units filtered by backend or UI category.
 - `/about`: source, backend package release, and issue-reporting links.
 - `/about-data`: backward-compatible alias for `/about`.
 
@@ -257,7 +276,7 @@ Returns adapter and backend package status.
 ```json
 {
   "ok": true,
-  "uiVersion": "1.0.0",
+  "uiVersion": "1.1.0",
   "packageVersion": "1.3.0"
 }
 ```
@@ -312,6 +331,10 @@ labels in every option.
 ### `POST /api/convert`
 
 Converts a value from one exact backend unit label to another.
+Requests must use `Content-Type: application/json`, and the JSON body is limited
+to 16 KiB. All three fields must be strings; decimal input is limited to 100
+digits with a scientific-notation exponent between `-1000` and `1000`, and unit
+labels are limited to 240 characters.
 
 ```json
 {
@@ -338,7 +361,7 @@ Error response:
 {
   "error": {
     "code": "INCOMPATIBLE_UNITS",
-    "message": "No conversion path found from ...",
+    "message": "The selected units cannot be converted.",
     "details": {}
   }
 }
@@ -346,39 +369,40 @@ Error response:
 
 Recommended error codes:
 
+- `INVALID_REQUEST`
+- `INVALID_JSON`
+- `UNSUPPORTED_MEDIA_TYPE`
+- `REQUEST_TOO_LARGE`
 - `INVALID_VALUE`
 - `UNIT_NOT_FOUND`
 - `INCOMPATIBLE_UNITS`
 - `AMBIGUOUS_CONVERSION`
 - `CONVERSION_NOT_FOUND`
+- `UNIT_CONVERTER_UNAVAILABLE`
 - `INTERNAL_ERROR`
 
 ## UI Composition
 
-### Home
+### Convert
 
-The home screen should be the usable converter, not a marketing page.
+The home screen is the usable converter, not a marketing page.
 
 Primary regions:
 
-- Express converter for common categories: Length, Temperature, Area, Volume,
-  Weight/Mass, and Time when supported by the backend catalog.
-- Unit search with "from" and "to" selectors.
-- Common conversion shortcuts generated from supported pairs.
-- Category grid matching UnitConverters.net-style groups where those groups map
-  to backend-supported units.
+- Separate Category and Measure selectors backed by the complete catalog.
+- From and To unit selectors, swap control, Amount input, and result panel.
+- Browser-local Favorites grouped by Category and Measure.
 
 ### Converter Page
 
-Each converter page should contain:
+Each converter view contains:
 
 - Numeric input with validation for decimal/scientific notation.
-- From and To unit selectors, searchable and keyboard-friendly.
+- Separate Category and Measure selectors.
+- Keyboard-friendly From and To unit selectors.
 - Swap button.
-- Result panel with copy action.
-- Popular shortcuts for the current converter.
-- Complete supported unit list for the current converter.
-- Source note linking the page to NIST-backed data.
+- Result panel with loading and error states.
+- Favorite save, load, and remove actions.
 
 ### Catalog Page
 
@@ -391,15 +415,14 @@ The catalog should expose all backend-supported units with:
 
 ## State And Data Flow
 
-Keep most state local and URL-driven:
+Converter state remains local, with routes providing an initial selection:
 
-- Current category and converter come from route params.
-- Current input value and unit selections can live in query params for shareable
-  links, for example `?value=1&from=meter%20(m)&to=foot%20(ft)`.
-- Catalog responses are cached through TanStack Query.
-- Conversion requests are debounced for typing, but should also run immediately
-  on unit changes and swap.
-- User preferences such as precision and notation can be stored in localStorage.
+- Deep links initialize the current Category and Measure.
+- Amount and unit selections remain in the converter workspace.
+- Conversion requests are debounced while typing and run immediately on unit,
+  measure, favorite, and swap changes.
+- Favorites are validated and stored in `localStorage` under a versioned key.
+- Storage events synchronize Favorites across tabs without rebuilding the page.
 
 Conversion flow:
 
@@ -413,13 +436,13 @@ User edits value or unit
 
 ## Formatting And Precision
 
-The backend returns exact `Decimal` results. The UI should preserve the raw
-string and format display separately:
+The backend returns exact `Decimal` results. The UI formats only the displayed
+string:
 
-- Default display: compact decimal string without unnecessary trailing zeros.
-- Advanced option: scientific notation for very large or small values.
-- Copy action should offer the displayed value first.
-- Do not round silently in data passed between frontend and backend.
+- Display at most 10 fractional digits, with correct rounding.
+- Remove unnecessary trailing zeros.
+- Preserve scientific-notation exponents returned by the backend.
+- Do not change values sent between the frontend and backend.
 
 ## Accessibility
 
@@ -433,19 +456,25 @@ Baseline requirements:
 
 ## Testing Strategy
 
-Frontend tests:
+Automated frontend tests currently cover:
 
-- Unit tests for formatting, query-param parsing, and unit filtering.
-- Component tests for converter form, unit selector, result panel, and error
-  states.
-- End-to-end tests for common conversions, swap behavior, invalid values, and
-  incompatible units.
+- Result formatting, numeric validation, group and measure filtering.
+- Latest-request ordering for asynchronous conversions.
+- Favorites persistence, grouping, validation, error handling, and cross-tab
+  storage synchronization.
+- Convert, Units, and About navigation markup.
 
-Contract tests:
+Python adapter tests cover:
 
-- Validate `/api/catalog` against the frontend TypeScript/Zod schema.
-- Verify a small set of known conversions against backend package examples,
-  including temperature and temperature interval cases.
+- Public static-file allowlisting and repository path protection.
+- Request body, Decimal, and unit-label validation boundaries.
+- Health responses that do not expose internal import errors.
+
+Release verification also includes:
+
+- JavaScript syntax and Python adapter compilation checks.
+- Browser smoke tests of conversion and Favorites flows.
+- Responsive visual checks across mobile and desktop viewport widths.
 
 ## Implementation Milestones
 

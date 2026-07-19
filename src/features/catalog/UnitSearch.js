@@ -51,23 +51,23 @@ export function renderUnitSearch(catalog) {
       .slice(0, 24);
 
     if (!matches.length) {
-      resultsSlot.innerHTML = '<div class="empty-state">No matching units.</div>';
+      resultsSlot.innerHTML = '<div class="empty-state" role="status"><strong>No matching units</strong><p>Try another name, symbol, or measure.</p></div>';
       return;
     }
 
     resultsSlot.innerHTML = raw`
-      <div class="unit-list">
+      <ul class="unit-list">
         ${matches
           .map(
             (unit) => raw`
-              <div class="unit-list__item">
+              <li class="unit-list__item">
                 <code>${html`${unit.label}`}</code>
                 <span>${html`${unit.symbol || unit.displayName}`}</span>
-              </div>
+              </li>
             `,
           )
           .join("")}
-      </div>
+      </ul>
     `;
   }
 

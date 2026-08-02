@@ -10,13 +10,12 @@ export function createConverterWorkspace({ catalog, converter, favoriteStore }) 
     </div>
   `);
 
-  let favoritesPanel;
   const converterForm = createConverterForm({
     catalog,
     converter,
     favoriteStore,
   });
-  favoritesPanel = createFavoritesPanel({
+  const favoritesPanel = createFavoritesPanel({
     catalog,
     store: favoriteStore,
     onSelect: (favorite) => {
@@ -32,19 +31,14 @@ export function createConverterWorkspace({ catalog, converter, favoriteStore }) 
     favoritesPanel.refresh();
     converterForm.refreshFavoriteState();
   };
-  const unsubscribe = favoriteStore?.subscribe(refreshFavorites);
+  const unsubscribe = favoriteStore.subscribe(refreshFavorites);
 
   workspace.querySelector('[data-slot="converter-form"]').append(converterForm.element);
   workspace.querySelector('[data-slot="favorites-panel"]').append(favoritesPanel.element);
   return {
     destroy() {
-      unsubscribe?.();
+      unsubscribe();
     },
     element: workspace,
-    refreshFavorites,
   };
-}
-
-export function renderConverterWorkspace(options) {
-  return createConverterWorkspace(options).element;
 }

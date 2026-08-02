@@ -9,9 +9,9 @@ export const unitConverterApi = {
     return request("/api/catalog");
   },
 
-  units(categorySlug) {
-    const query = categorySlug ? `?category=${encodeURIComponent(categorySlug)}` : "";
-    return request(`/api/units${query}`);
+  compatibleUnits(unitId) {
+    const query = new URLSearchParams({ compatibleWith: unitId });
+    return request(`/api/units?${query}`);
   },
 
   convert({ value, fromUnit, toUnit }) {
@@ -21,4 +21,3 @@ export const unitConverterApi = {
     });
   },
 };
-

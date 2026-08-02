@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { compactNumberString, convertersForGroup } from "./unitFilters.js";
+import {
+  compactNumberString,
+  compatibleUnitsForConverter,
+  convertersForGroup,
+  getDefaultPair,
+} from "./unitFilters.js";
 
 const catalog = {
   categories: [
@@ -67,4 +72,42 @@ test("limits displayed conversion results to ten decimal places", () => {
     "12345678901234567890.1234567891",
   );
   assert.equal(compactNumberString("1.23456789015E+20"), "1.2345678902E+20");
+});
+
+test("uses stable unit IDs for a converter default pair", () => {
+  const converter = {
+    defaultFromUnit: "unit.u0288",
+    defaultToUnit: "unit.u0250",
+    units: [
+      { unitId: "unit.u0250", displayName: "kilometer per hour (km / h)" },
+      { unitId: "unit.u0288", displayName: "mile per hour (mi / h)" },
+    ],
+  };
+
+  assert.deepEqual(getDefaultPair(converter), {
+    fromUnit: "unit.u0288",
+    toUnit: "unit.u0250",
+  });
+});
+
+test("limits compatible targets to the current converter in catalog order", () => {
+  const converter = {
+    units: [
+      { unitId: "unit.u0288", displayName: "mile per hour (mi / h)" },
+      { unitId: "unit.u0250", displayName: "kilometer per hour (km / h)" },
+      { unitId: "unit.u0397", displayName: "second (s)" },
+    ],
+  };
+  const compatibleUnits = [
+    { unitId: "unit.u0250", displayName: "kilometer per hour (km / h)" },
+    { unitId: "unit.u0288", displayName: "mile per hour (mi / h)" },
+    { unitId: "unit.u0999", displayName: "another speed" },
+  ];
+
+  assert.deepEqual(
+    compatibleUnitsForConverter(converter, compatibleUnits).map(
+      (unit) => unit.unitId,
+    ),
+    ["unit.u0288", "unit.u0250"],
+  );
 });

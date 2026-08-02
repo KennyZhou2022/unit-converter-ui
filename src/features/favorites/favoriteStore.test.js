@@ -1,15 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createFavoriteStore, favoriteKey } from "./favoriteStore.js";
+import {
+  FAVORITES_STORAGE_KEY,
+  LEGACY_FAVORITES_STORAGE_KEY,
+  createFavoriteStore,
+} from "./favoriteStore.js";
 
-const STORAGE_KEY = "unit-converter:favorites:v1";
 const createdAt = "2026-07-19T12:00:00.000Z";
+const catalogUnits = [
+  { unitId: "unit.u0159", displayName: "foot (ft)", aliases: [] },
+  {
+    unitId: "unit.u0233",
+    displayName: "kilogram (kg)",
+    aliases: ["kilogram (k g)"],
+  },
+  { unitId: "unit.u0271", displayName: "meter (m)", aliases: [] },
+  {
+    unitId: "unit.u0346",
+    displayName: "pound (avoirdupois) (lb)",
+    aliases: [],
+  },
+];
 const meterToFoot = {
   groupSlug: "dimension-converters",
   converterSlug: "length",
-  fromUnit: "meter (m)",
-  toUnit: "foot (ft)",
+  fromUnitId: "unit.u0271",
+  toUnitId: "unit.u0159",
 };
 
 class MemoryStorage {
@@ -27,7 +44,10 @@ class MemoryStorage {
 }
 
 function createStore(storage = new MemoryStorage()) {
-  return createFavoriteStore(storage, { now: () => createdAt });
+  return createFavoriteStore(storage, {
+    now: () => createdAt,
+    units: catalogUnits,
+  });
 }
 
 test("adds a favorite and persists the versioned payload", () => {
@@ -42,8 +62,8 @@ test("adds a favorite and persists the versioned payload", () => {
     items: [{ ...meterToFoot, createdAt }],
     error: "",
   });
-  assert.deepEqual(JSON.parse(storage.getItem(STORAGE_KEY)), {
-    schemaVersion: 1,
+  assert.deepEqual(JSON.parse(storage.getItem(FAVORITES_STORAGE_KEY)), {
+    schemaVersion: 2,
     items: [{ ...meterToFoot, createdAt }],
   });
 });
@@ -64,23 +84,22 @@ test("treats the reverse direction as a separate favorite", () => {
   const store = createStore();
   const footToMeter = {
     ...meterToFoot,
-    fromUnit: meterToFoot.toUnit,
-    toUnit: meterToFoot.fromUnit,
+    fromUnitId: meterToFoot.toUnitId,
+    toUnitId: meterToFoot.fromUnitId,
   };
 
   store.toggle(meterToFoot);
   store.toggle(footToMeter);
 
   assert.equal(store.getSnapshot().items.length, 2);
-  assert.notEqual(favoriteKey(meterToFoot), favoriteKey(footToMeter));
 });
 
 test("removes a favorite without affecting other directions", () => {
   const store = createStore();
   const footToMeter = {
     ...meterToFoot,
-    fromUnit: meterToFoot.toUnit,
-    toUnit: meterToFoot.fromUnit,
+    fromUnitId: meterToFoot.toUnitId,
+    toUnitId: meterToFoot.fromUnitId,
   };
   store.toggle(meterToFoot);
   store.toggle(footToMeter);
@@ -93,7 +112,9 @@ test("removes a favorite without affecting other directions", () => {
 });
 
 test("recovers from damaged stored JSON without throwing", () => {
-  const store = createStore(new MemoryStorage({ [STORAGE_KEY]: "{damaged" }));
+  const store = createStore(
+    new MemoryStorage({ [FAVORITES_STORAGE_KEY]: "{damaged" }),
+  );
 
   const snapshot = store.getSnapshot();
 
@@ -116,7 +137,10 @@ test("does not mutate the in-memory list when persistence fails", () => {
 });
 
 test("reports unavailable browser storage instead of pretending to persist", () => {
-  const store = createFavoriteStore(null, { now: () => createdAt });
+  const store = createFavoriteStore(null, {
+    now: () => createdAt,
+    units: catalogUnits,
+  });
 
   const result = store.toggle(meterToFoot);
 
@@ -128,11 +152,11 @@ test("reports unavailable browser storage instead of pretending to persist", () 
 test("rejects malformed and oversized favorite fields", () => {
   const store = createStore();
 
-  const missingUnit = store.toggle({ ...meterToFoot, fromUnit: "" });
-  const oversizedUnit = store.toggle({ ...meterToFoot, toUnit: "x".repeat(241) });
+  const missingUnit = store.toggle({ ...meterToFoot, fromUnitId: "" });
+  const invalidUnitId = store.toggle({ ...meterToFoot, toUnitId: "meter (m)" });
 
   assert.equal(missingUnit.ok, false);
-  assert.equal(oversizedUnit.ok, false);
+  assert.equal(invalidUnitId.ok, false);
   assert.deepEqual(store.getSnapshot().items, []);
 });
 
@@ -157,8 +181,8 @@ test("rebases writes on the latest storage state from another tab", () => {
   const kilogramToPound = {
     groupSlug: "mechanics-converters",
     converterSlug: "weight-and-mass",
-    fromUnit: "kilogram (kg)",
-    toUnit: "pound (lb)",
+    fromUnitId: "unit.u0233",
+    toUnitId: "unit.u0346",
   };
 
   firstTab.toggle(meterToFoot);
@@ -168,5 +192,49 @@ test("rebases writes on the latest storage state from another tab", () => {
     { ...meterToFoot, createdAt },
     { ...kilogramToPound, createdAt },
   ]);
-  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).items.length, 2);
+  assert.equal(JSON.parse(storage.getItem(FAVORITES_STORAGE_KEY)).items.length, 2);
+});
+
+test("migrates legacy display names and aliases to stable unit IDs", () => {
+  const storage = new MemoryStorage({
+    [LEGACY_FAVORITES_STORAGE_KEY]: JSON.stringify({
+      schemaVersion: 1,
+      items: [
+        {
+          groupSlug: "dimension-converters",
+          converterSlug: "length",
+          fromUnit: "meter (m)",
+          toUnit: "foot (ft)",
+          createdAt,
+        },
+        {
+          groupSlug: "mechanics-converters",
+          converterSlug: "weight-and-mass",
+          fromUnit: "kilogram (k g)",
+          toUnit: "pound (avoirdupois) (lb)",
+          createdAt,
+        },
+      ],
+    }),
+  });
+
+  const store = createStore(storage);
+
+  assert.deepEqual(store.getSnapshot(), {
+    items: [
+      { ...meterToFoot, createdAt },
+      {
+        groupSlug: "mechanics-converters",
+        converterSlug: "weight-and-mass",
+        fromUnitId: "unit.u0233",
+        toUnitId: "unit.u0346",
+        createdAt,
+      },
+    ],
+    error: "",
+  });
+  assert.equal(
+    JSON.parse(storage.getItem(FAVORITES_STORAGE_KEY)).schemaVersion,
+    2,
+  );
 });

@@ -18,7 +18,7 @@ export function renderResultPanel({ value, result, error, loading, fromUnit, toU
           <span class="visually-hidden">Calculating the conversion result.</span>
         `
       : raw`
-          <div class="result__label">Calculated result</div>
+          <div class="result__label">result</div>
           <output class="result__value">${html`${compactNumberString(result || "Ready")}`}</output>
           <div class="result__meta">
             <span>${html`${value || "Amount"}`} ${html`${fromUnit || "from unit"}`}</span>

@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { FAVORITES_STORAGE_KEY } from "./favoriteStore.js";
+import {
+  FAVORITES_STORAGE_KEY,
+  LEGACY_FAVORITES_STORAGE_KEY,
+} from "./favoriteStore.js";
 import { isFavoritesStorageEvent } from "./favoriteStorageSync.js";
 
 test("accepts favorite updates and localStorage clear events", () => {
@@ -16,6 +19,13 @@ test("accepts favorite updates and localStorage clear events", () => {
   );
   assert.equal(
     isFavoritesStorageEvent({ key: null, storageArea: localStorage }, localStorage),
+    true,
+  );
+  assert.equal(
+    isFavoritesStorageEvent(
+      { key: LEGACY_FAVORITES_STORAGE_KEY, storageArea: localStorage },
+      localStorage,
+    ),
     true,
   );
 });

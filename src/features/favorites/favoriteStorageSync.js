@@ -1,7 +1,15 @@
-import { FAVORITES_STORAGE_KEY } from "./favoriteStore.js";
+import {
+  FAVORITES_STORAGE_KEY,
+  LEGACY_FAVORITES_STORAGE_KEY,
+} from "./favoriteStore.js";
 
 export function isFavoritesStorageEvent(event, localStorage) {
-  if (!event || (event.key !== FAVORITES_STORAGE_KEY && event.key !== null)) {
+  if (
+    !event
+    || ![FAVORITES_STORAGE_KEY, LEGACY_FAVORITES_STORAGE_KEY, null].includes(
+      event.key,
+    )
+  ) {
     return false;
   }
 

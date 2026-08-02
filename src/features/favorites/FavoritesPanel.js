@@ -1,7 +1,7 @@
 import { createElement, html, raw } from "../../components/dom.js";
 import { groupFavorites } from "./favoriteGroups.js";
 
-export function createFavoritesPanel({ catalog, store, onSelect, onRemove }) {
+export function createFavoritesPanel({ catalog, store, onSelect }) {
   const element = createElement(raw`
     <section class="panel favorites-panel" aria-labelledby="favorites-title">
       <div class="panel__header favorites-panel__header">
@@ -141,8 +141,6 @@ export function createFavoritesPanel({ catalog, store, onSelect, onRemove }) {
       announce(result.error);
       return;
     }
-    refresh();
-    onRemove?.();
     announce(message);
     const remainingButtons = [...element.querySelectorAll(".favorite-item__remove")];
     const nextTarget =
@@ -169,11 +167,11 @@ export function createFavoritesPanel({ catalog, store, onSelect, onRemove }) {
       const item = createElement(raw`
         <li class="favorite-item favorite-item--unavailable">
           <div class="favorite-item__unavailable">
-            <span>${html`${favorite.fromUnit}`}</span>
+            <span>${html`${favorite.fromLabel}`}</span>
             <span aria-hidden="true">→</span>
-            <span>${html`${favorite.toUnit}`}</span>
+            <span>${html`${favorite.toLabel}`}</span>
           </div>
-          <button class="favorite-item__remove" type="button" aria-label="Remove unavailable ${html`${favorite.fromUnit}`} to ${html`${favorite.toUnit}`} favorite" title="Remove favorite">
+          <button class="favorite-item__remove" type="button" aria-label="Remove unavailable ${html`${favorite.fromLabel}`} to ${html`${favorite.toLabel}`} favorite" title="Remove favorite">
             <svg aria-hidden="true" viewBox="0 0 20 20" width="18" height="18">
               <path d="M4.5 5.5h11m-7.5 3v5m4-5v5M7 5.5l.7-2h4.6l.7 2m1 0-.6 11H6.6L6 5.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/>
             </svg>
@@ -184,7 +182,7 @@ export function createFavoritesPanel({ catalog, store, onSelect, onRemove }) {
         removeFavorite(
           favorite,
           event.currentTarget,
-          `Removed unavailable ${favorite.fromUnit} to ${favorite.toUnit} favorite.`,
+          `Removed unavailable ${favorite.fromLabel} to ${favorite.toLabel} favorite.`,
         );
       });
       list.append(item);
@@ -193,5 +191,5 @@ export function createFavoritesPanel({ catalog, store, onSelect, onRemove }) {
   }
 
   refresh();
-  return { element, refresh, announce };
+  return { element, refresh };
 }

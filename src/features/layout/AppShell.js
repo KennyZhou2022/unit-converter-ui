@@ -1,6 +1,6 @@
 import { html, raw } from "../../components/dom.js";
 
-export function shell(content, activePath, appVersion = "1.1.0") {
+export function shell(content, activePath, appVersion = "2.0.0") {
   return raw`
     <div class="app-shell">
       <a class="skip-link" href="#main-content">Skip to main content</a>

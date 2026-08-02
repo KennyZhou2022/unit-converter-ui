@@ -7,7 +7,6 @@ export function renderCatalogPage(catalog) {
       <section>
         <p class="eyebrow">Unit index</p>
         <h1>Supported units</h1>
-        <p class="lede">Search exact backend labels, common names, or symbols across the complete catalog.</p>
       </section>
       <section class="section" aria-label="Filter supported units">
         <div class="filters">
@@ -31,6 +30,7 @@ export function renderCatalogPage(catalog) {
   const summarySlot = element.querySelector('[data-slot="catalog-summary"]');
   const resultsSlot = element.querySelector('[data-slot="catalog-results"]');
   const converters = flattenConverters(catalog);
+  const categoryLabelsByUnitId = buildUnitCategoryLabels(catalog);
 
   categorySelect.append(new Option("All categories", ""));
   for (const converter of converters) {
@@ -38,19 +38,44 @@ export function renderCatalogPage(catalog) {
       new Option(`${converter.groupName} / ${converter.name}`, converter.slug),
     );
   }
+  if (catalog.unmappedUnits.length) {
+    categorySelect.append(
+      new Option("Uncategorized", "__uncategorized__"),
+    );
+  }
 
-  function selectedUnits() {
+  function selectedRows() {
     const slug = categorySelect.value;
     if (!slug) {
-      return catalog.allUnits;
+      return catalog.allUnits.map((unit) => ({
+        category:
+          categoryLabelsByUnitId.get(unit.unitId)?.join("; ") || "Uncategorized",
+        unit,
+      }));
     }
-    return converters.find((converter) => converter.slug === slug)?.units || [];
+    if (slug === "__uncategorized__") {
+      return catalog.unmappedUnits.map((unit) => ({
+        category: "Uncategorized",
+        unit,
+      }));
+    }
+    const converter = converters.find((item) => item.slug === slug);
+    if (!converter) {
+      return [];
+    }
+    const category = `${converter.groupName} / ${converter.name}`;
+    return converter.units.map((unit) => ({ category, unit }));
   }
 
   function draw() {
     const query = normalize(queryInput.value);
-    const matches = selectedUnits().filter(
-      (unit) => !query || unit.searchText.includes(query),
+    const matches = sortCatalogRows(
+      selectedRows().filter(
+        ({ category, unit }) =>
+          !query ||
+          unit.searchText.includes(query) ||
+          normalize(category).includes(query),
+      ),
     );
     summarySlot.textContent = `${matches.length} ${matches.length === 1 ? "unit" : "units"}`;
 
@@ -69,18 +94,31 @@ export function renderCatalogPage(catalog) {
     }
 
     resultsSlot.innerHTML = raw`
-      <ul class="unit-list">
+      <table class="unit-table">
+        <caption class="visually-hidden">Supported units ordered by category and then unit name</caption>
+        <colgroup>
+          <col class="unit-table__category-column" />
+          <col />
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col" aria-sort="ascending">Category</th>
+            <th scope="col">Unit</th>
+          </tr>
+        </thead>
+        <tbody>
         ${matches
           .map(
-            (unit) => raw`
-              <li class="unit-list__item">
-                <code>${html`${unit.label}`}</code>
-                <span>${html`${unit.symbol || unit.displayName}`}</span>
-              </li>
+            ({ category, unit }) => raw`
+              <tr>
+                <td class="unit-table__category">${html`${category}`}</td>
+                <td class="unit-table__name">${html`${unit.displayName}`}</td>
+              </tr>
             `,
           )
           .join("")}
-      </ul>
+        </tbody>
+      </table>
     `;
   }
 
@@ -101,4 +139,64 @@ export function renderCatalogPage(catalog) {
 
 function normalize(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function buildUnitCategoryLabels(catalog) {
+  const labelsByUnitId = new Map();
+
+  for (const converter of flattenConverters(catalog)) {
+    const label = `${converter.groupName} / ${converter.name}`;
+    for (const unit of converter.units) {
+      const labels = labelsByUnitId.get(unit.unitId) || [];
+      if (!labels.includes(label)) {
+        labels.push(label);
+        labelsByUnitId.set(unit.unitId, labels);
+      }
+    }
+  }
+
+  for (const labels of labelsByUnitId.values()) {
+    labels.sort(compareAlphabetically);
+  }
+
+  return labelsByUnitId;
+}
+
+export function sortCatalogRows(rows) {
+  return [...rows].sort(
+    (left, right) =>
+      compareAlphabetically(left.category, right.category) ||
+      compareAlphabetically(left.unit.displayName, right.unit.displayName) ||
+      compareText(left.unit.unitId, right.unit.unitId),
+  );
+}
+
+function compareAlphabetically(left, right) {
+  const leftParts = alphabeticalParts(left);
+  const rightParts = alphabeticalParts(right);
+
+  for (let index = 0; index < leftParts.length; index += 1) {
+    const comparison = compareText(leftParts[index], rightParts[index]);
+    if (comparison) {
+      return comparison;
+    }
+  }
+  return 0;
+}
+
+function alphabeticalParts(value) {
+  const folded = value.normalize("NFKD").toLowerCase();
+  const unaccented = folded.replace(/\p{M}/gu, "");
+  return [
+    unaccented.replace(/[^a-z0-9]+/g, " ").trim(),
+    unaccented,
+    value,
+  ];
+}
+
+function compareText(left, right) {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
 }

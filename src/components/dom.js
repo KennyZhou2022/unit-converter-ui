@@ -10,7 +10,7 @@ export function raw(strings, ...values) {
   }, "");
 }
 
-export function escapeHtml(value) {
+function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -35,4 +35,3 @@ export function setOptions(select, options, selectedValue) {
     select.append(element);
   }
 }
-

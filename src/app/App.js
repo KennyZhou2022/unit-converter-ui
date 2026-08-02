@@ -1,7 +1,7 @@
 import { createElement, html, raw } from "../components/dom.js";
 import { renderCatalogPage } from "../features/catalog/CatalogPage.js";
 import { createConverterWorkspace } from "../features/converter/ConverterWorkspace.js";
-import { findConverter, firstConverter } from "../features/converter/unitFilters.js";
+import { findConverter } from "../features/converter/unitFilters.js";
 import { createFavoriteStore } from "../features/favorites/favoriteStore.js";
 import { isFavoritesStorageEvent } from "../features/favorites/favoriteStorageSync.js";
 import { shell } from "../features/layout/AppShell.js";
@@ -53,7 +53,7 @@ export async function mountApp(root) {
     health = { packageVersion: "Unavailable" };
   }
   const storage = browserStorage();
-  const favoriteStore = createFavoriteStore(storage);
+  const favoriteStore = createFavoriteStore(storage, { units: catalog.allUnits });
   let activeView;
 
   function navigate(path) {
@@ -77,10 +77,11 @@ export async function mountApp(root) {
       return;
     }
 
-    const converter =
-      route.name === "convert"
-        ? findConverter(catalog, route.groupSlug, route.converterSlug)
-        : firstConverter(catalog);
+    const converter = findConverter(
+      catalog,
+      route.groupSlug,
+      route.converterSlug,
+    );
     root.innerHTML = shell("", "/", appVersion);
     activeView = createConverterPage(catalog, converter, favoriteStore);
     root.querySelector(".app-shell").append(activeView.element);
@@ -111,9 +112,9 @@ async function loadAppVersion() {
       throw new Error(`VERSION returned ${response.status}`);
     }
     const version = (await response.text()).trim();
-    return version || "1.1.0";
+    return version || "2.0.0";
   } catch {
-    return "1.1.0";
+    return "2.0.0";
   }
 }
 
@@ -174,12 +175,12 @@ function renderAboutPage(catalog, health) {
           <h2>Python Package</h2>
           <p>
             Current wheel package version:
-            <strong>unit-converter ${html`${packageVersion}`}</strong>
+            <strong>nist-unit-converter ${html`${packageVersion}`}</strong>
           </p>
           <p>
             Wheel files are available from the backend package releases:
             <a href="https://github.com/KennyZhou2022/unit-converter/releases" target="_blank" rel="noreferrer">
-              unit-converter releases
+              nist-unit-converter releases
             </a>
           </p>
         </div>

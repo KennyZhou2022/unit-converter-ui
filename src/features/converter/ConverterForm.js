@@ -1,7 +1,7 @@
 import { createElement, html, raw, setOptions } from "../../components/dom.js";
-import { unitDisplayLabel } from "../favorites/favoriteGroups.js";
 import { unitConverterApi } from "../../services/api/unitConverterApi.js";
 import {
+  compatibleUnitsForConverter,
   convertersForGroup,
   getDefaultPair,
   isNumericInput,
@@ -13,7 +13,6 @@ export function createConverterForm({
   catalog,
   converter,
   favoriteStore,
-  onFavoritesChange,
 }) {
   const element = createElement(raw`
     <section class="panel converter-panel" aria-labelledby="converter-title">
@@ -83,17 +82,21 @@ export function createConverterForm({
   const favoriteLabel = element.querySelector('[data-slot="favorite-label"]');
   const favoriteFeedback = element.querySelector('[data-slot="favorite-feedback"]');
 
+  const initialPair = getDefaultPair(converter);
   const state = {
     converter,
-    groupSlug: converter.groupSlug,
     value: "1",
-    ...getDefaultPair(converter),
+    fromUnitId: initialPair.fromUnit,
+    toUnitId: initialPair.toUnit,
+    compatibleUnits: [],
+    compatibleLoading: true,
     result: "",
     error: "",
     loading: false,
     timer: 0,
   };
   const conversionGate = createConversionRequestGate();
+  let compatibilityRequest = 0;
 
   setOptions(
     groupSelect,
@@ -101,11 +104,11 @@ export function createConverterForm({
       value: group.slug,
       label: group.name,
     })),
-    state.groupSlug,
+    state.converter.groupSlug,
   );
 
   function drawMeasures() {
-    const converters = convertersForGroup(catalog, state.groupSlug);
+    const converters = convertersForGroup(catalog, state.converter.groupSlug);
     setOptions(
       converterSelect,
       converters.map((item) => ({
@@ -114,44 +117,35 @@ export function createConverterForm({
       })),
       state.converter.slug,
     );
-    return converters;
   }
 
   function selectConverter(next, preferredPair = getDefaultPair(next)) {
-    window.clearTimeout(state.timer);
-    const availableUnits = new Set(next.units.map((unit) => unit.label));
+    const availableUnits = new Set(next.units.map((unit) => unit.unitId));
     const pair =
       availableUnits.has(preferredPair.fromUnit) &&
       availableUnits.has(preferredPair.toUnit)
         ? preferredPair
         : getDefaultPair(next);
     state.converter = next;
-    state.groupSlug = next.groupSlug;
-    Object.assign(state, pair);
-    state.result = "";
-    state.error = "";
-    state.loading = false;
-    groupSelect.value = state.groupSlug;
+    state.fromUnitId = pair.fromUnit;
+    state.toUnitId = pair.toUnit;
+    groupSelect.value = next.groupSlug;
     converterTitle.textContent = `${next.name} converter`;
     drawMeasures();
-    drawUnits();
-    syncFavoriteButton();
-    drawResult();
-    scheduleConvert(0);
+    void loadCompatibleUnits(pair.toUnit);
   }
 
   drawMeasures();
 
   groupSelect.addEventListener("change", () => {
-    state.groupSlug = groupSelect.value;
-    const next = convertersForGroup(catalog, state.groupSlug)[0];
+    const next = convertersForGroup(catalog, groupSelect.value)[0];
     if (next) {
       selectConverter(next);
     }
   });
 
   converterSelect.addEventListener("change", () => {
-    const next = convertersForGroup(catalog, state.groupSlug).find(
+    const next = convertersForGroup(catalog, state.converter.groupSlug).find(
       (item) => item.slug === converterSelect.value,
     );
     if (next) {
@@ -160,36 +154,66 @@ export function createConverterForm({
   });
 
   function drawUnits() {
-    const unitOptions = state.converter.units.map((unit) => ({
-      value: unit.label,
-      label: unit.symbol
-        ? `${unit.displayName} (${unit.symbol})`
-        : unit.displayName,
+    const fromOptions = state.converter.units.map((unit) => ({
+      value: unit.unitId,
+      label: unit.displayName,
     }));
-    setOptions(fromSelect, unitOptions, state.fromUnit);
-    setOptions(toSelect, unitOptions, state.toUnit);
+    setOptions(fromSelect, fromOptions, state.fromUnitId);
+
+    if (state.compatibleLoading) {
+      setOptions(
+        toSelect,
+        [{ value: "", label: "Loading compatible units..." }],
+        "",
+      );
+    } else if (!state.compatibleUnits.length) {
+      setOptions(
+        toSelect,
+        [{ value: "", label: "No compatible units available" }],
+        "",
+      );
+    } else {
+      setOptions(
+        toSelect,
+        state.compatibleUnits.map((unit) => ({
+          value: unit.unitId,
+          label: unit.displayName,
+        })),
+        state.toUnitId,
+      );
+    }
+    toSelect.disabled = state.compatibleLoading || !state.compatibleUnits.length;
+    toSelect.setAttribute("aria-busy", state.compatibleLoading ? "true" : "false");
+    swapButton.disabled = state.compatibleLoading || !state.toUnitId;
   }
 
   function currentFavorite() {
     return {
-      groupSlug: state.groupSlug,
+      groupSlug: state.converter.groupSlug,
       converterSlug: state.converter.slug,
-      fromUnit: state.fromUnit,
-      toUnit: state.toUnit,
+      fromUnitId: state.fromUnitId,
+      toUnitId: state.toUnitId,
     };
   }
 
   function favoriteDescription() {
-    const units = new Map(state.converter.units.map((unit) => [unit.label, unit]));
-    const fromUnit = units.get(state.fromUnit);
-    const toUnit = units.get(state.toUnit);
-    const fromLabel = fromUnit ? unitDisplayLabel(fromUnit) : state.fromUnit;
-    const toLabel = toUnit ? unitDisplayLabel(toUnit) : state.toUnit;
+    const fromUnit = unitForId(state.fromUnitId);
+    const toUnit = unitForId(state.toUnitId);
+    const fromLabel = fromUnit?.displayName || state.fromUnitId;
+    const toLabel = toUnit?.displayName || state.toUnitId;
     return `${fromLabel} to ${toLabel}`;
   }
 
+  function unitForId(unitId) {
+    return state.converter.units.find((unit) => unit.unitId === unitId);
+  }
+
   function syncFavoriteButton() {
-    const saved = Boolean(favoriteStore?.has(currentFavorite()));
+    const canSave = Boolean(
+      state.fromUnitId && state.toUnitId && !state.compatibleLoading,
+    );
+    const saved = canSave && favoriteStore.has(currentFavorite());
+    favoriteButton.disabled = !canSave;
     favoriteButton.setAttribute("aria-pressed", saved ? "true" : "false");
     favoriteButton.setAttribute(
       "aria-label",
@@ -214,17 +238,73 @@ export function createConverterForm({
         result: state.result,
         error: state.error,
         loading: state.loading,
-        fromUnit: state.fromUnit,
-        toUnit: state.toUnit,
+        fromUnit: unitForId(state.fromUnitId)?.displayName || state.fromUnitId,
+        toUnit: unitForId(state.toUnitId)?.displayName || state.toUnitId,
       }),
     );
+  }
+
+  async function loadCompatibleUnits(preferredToUnitId = state.toUnitId) {
+    const request = ++compatibilityRequest;
+    window.clearTimeout(state.timer);
+    conversionGate.next();
+    state.compatibleLoading = true;
+    state.compatibleUnits = [];
+    state.result = "";
+    state.error = "";
+    state.loading = true;
+    drawUnits();
+    syncFavoriteButton();
+    drawResult();
+
+    try {
+      const response = await unitConverterApi.compatibleUnits(state.fromUnitId);
+      if (request !== compatibilityRequest) {
+        return;
+      }
+      state.compatibleUnits = compatibleUnitsForConverter(
+        state.converter,
+        response.units,
+      );
+      const compatibleIds = new Set(
+        state.compatibleUnits.map((unit) => unit.unitId),
+      );
+      const fallback =
+        state.compatibleUnits.find((unit) => unit.unitId !== state.fromUnitId)
+        || state.compatibleUnits[0];
+      state.toUnitId = compatibleIds.has(preferredToUnitId)
+        ? preferredToUnitId
+        : fallback?.unitId || "";
+      state.compatibleLoading = false;
+      state.loading = false;
+      if (!state.toUnitId) {
+        state.error = "NO_COMPATIBLE_UNITS: No compatible target unit is available.";
+      }
+      drawUnits();
+      syncFavoriteButton();
+      drawResult();
+      if (state.toUnitId) {
+        scheduleConvert(0);
+      }
+    } catch (error) {
+      if (request !== compatibilityRequest) {
+        return;
+      }
+      state.compatibleUnits = [];
+      state.compatibleLoading = false;
+      state.toUnitId = "";
+      state.loading = false;
+      state.error = `${error.code || "COMPATIBILITY_FAILED"}: ${error.message}`;
+      drawUnits();
+      syncFavoriteButton();
+      drawResult();
+    }
   }
 
   async function runConvert(request) {
     if (!conversionGate.isCurrent(request)) {
       return;
     }
-    window.clearTimeout(state.timer);
     const value = state.value.trim();
     if (!isNumericInput(value)) {
       valueInput.setAttribute("aria-invalid", "true");
@@ -243,8 +323,8 @@ export function createConverterForm({
     try {
       const response = await unitConverterApi.convert({
         value,
-        fromUnit: state.fromUnit,
-        toUnit: state.toUnit,
+        fromUnit: state.fromUnitId,
+        toUnit: state.toUnitId,
       });
       if (!conversionGate.isCurrent(request)) {
         return;
@@ -263,6 +343,9 @@ export function createConverterForm({
   }
 
   function scheduleConvert(delay = 250) {
+    if (state.compatibleLoading || !state.fromUnitId || !state.toUnitId) {
+      return;
+    }
     window.clearTimeout(state.timer);
     const request = conversionGate.next();
     state.timer = window.setTimeout(() => runConvert(request), delay);
@@ -274,35 +357,26 @@ export function createConverterForm({
   });
 
   fromSelect.addEventListener("change", () => {
-    state.fromUnit = fromSelect.value;
-    syncFavoriteButton();
-    scheduleConvert(0);
+    state.fromUnitId = fromSelect.value;
+    void loadCompatibleUnits(state.toUnitId);
   });
 
   toSelect.addEventListener("change", () => {
-    state.toUnit = toSelect.value;
+    state.toUnitId = toSelect.value;
     syncFavoriteButton();
     scheduleConvert(0);
   });
 
   swapButton.addEventListener("click", () => {
-    const previousFrom = state.fromUnit;
-    state.fromUnit = state.toUnit;
-    state.toUnit = previousFrom;
-    drawUnits();
-    syncFavoriteButton();
-    scheduleConvert(0);
+    const previousFrom = state.fromUnitId;
+    state.fromUnitId = state.toUnitId;
+    state.toUnitId = previousFrom;
+    void loadCompatibleUnits(previousFrom);
   });
 
   favoriteButton.addEventListener("click", () => {
-    if (!favoriteStore) {
-      announceFavorite("Favorites are unavailable in this browser.");
-      return;
-    }
     const description = favoriteDescription();
     const result = favoriteStore.toggle(currentFavorite());
-    syncFavoriteButton();
-    onFavoritesChange?.();
     announceFavorite(
       result.ok
         ? result.saved
@@ -325,21 +399,18 @@ export function createConverterForm({
     if (!next) {
       return false;
     }
-    const units = new Set(next.units.map((unit) => unit.label));
-    if (!units.has(favorite.fromUnit) || !units.has(favorite.toUnit)) {
+    const units = new Set(next.units.map((unit) => unit.unitId));
+    if (!units.has(favorite.fromUnitId) || !units.has(favorite.toUnitId)) {
       return false;
     }
     selectConverter(next, {
-      fromUnit: favorite.fromUnit,
-      toUnit: favorite.toUnit,
+      fromUnit: favorite.fromUnitId,
+      toUnit: favorite.toUnitId,
     });
     return true;
   }
 
-  drawUnits();
-  syncFavoriteButton();
-  drawResult();
-  scheduleConvert(0);
+  void loadCompatibleUnits(state.toUnitId);
 
   return {
     applyFavorite,
@@ -349,8 +420,4 @@ export function createConverterForm({
     },
     refreshFavoriteState: syncFavoriteButton,
   };
-}
-
-export function renderConverterForm(options) {
-  return createConverterForm(options).element;
 }

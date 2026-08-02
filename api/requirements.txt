@@ -1,3 +1,3 @@
 # Cloud/general deployment dependency.
-# Bump the tag or switch to a published PyPI version when the backend package updates.
-unit-converter @ git+https://github.com/KennyZhou2022/unit-converter.git@v1.3.0
+# Bump the Git tag when the backend package updates. Releases are not installed from PyPI.
+nist-unit-converter @ git+https://github.com/KennyZhou2022/unit-converter.git@v2.0.0

@@ -34,22 +34,17 @@ export function findConverter(catalog, groupSlug, converterSlug) {
   );
 }
 
-export function firstConverter(catalog) {
-  return flattenConverters(catalog)[0];
-}
-
-export function unitsForPrimaryComponent(converter) {
-  const primary = converter.connectedComponents?.[0]?.units;
-  if (!primary?.length) {
-    return converter.units.map((unit) => unit.label);
-  }
-  return primary;
-}
-
 export function getDefaultPair(converter) {
-  const fromUnit = converter.defaultFromUnit || converter.units[0]?.label || "";
-  const toUnit = converter.defaultToUnit || converter.units[1]?.label || fromUnit;
+  const fromUnit = converter.defaultFromUnit || converter.units[0]?.unitId || "";
+  const toUnit = converter.defaultToUnit || converter.units[1]?.unitId || fromUnit;
   return { fromUnit, toUnit };
+}
+
+export function compatibleUnitsForConverter(converter, compatibleUnits) {
+  const compatibleIds = new Set(
+    compatibleUnits.map((unit) => unit.unitId),
+  );
+  return converter.units.filter((unit) => compatibleIds.has(unit.unitId));
 }
 
 export function compactNumberString(value) {

@@ -12,5 +12,5 @@ export function parseRoute(pathname) {
   if (parts[0] === "convert" && parts.length >= 3) {
     return { name: "convert", groupSlug: parts[1], converterSlug: parts[2] };
   }
-  return { name: "notFound" };
+  return { name: "home" };
 }

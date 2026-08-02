@@ -4,6 +4,16 @@ import assert from "node:assert/strict";
 import { groupFavorites } from "./favoriteGroups.js";
 
 const catalog = {
+  allUnits: [
+    { unitId: "unit.u0159", displayName: "foot (ft)" },
+    { unitId: "unit.u0233", displayName: "kilogram (kg)" },
+    { unitId: "unit.u0249", displayName: "kilometer (km)" },
+    { unitId: "unit.u0271", displayName: "meter (m)" },
+    {
+      unitId: "unit.u0346",
+      displayName: "pound (avoirdupois) (lb)",
+    },
+  ],
   categories: [
     {
       name: "Dimension Converters",
@@ -13,9 +23,9 @@ const catalog = {
           name: "Length",
           slug: "length",
           units: [
-            { label: "meter (m)", displayName: "meter", symbol: "m" },
-            { label: "foot (ft)", displayName: "foot", symbol: "ft" },
-            { label: "kilometer (km)", displayName: "kilometer", symbol: "km" },
+            { unitId: "unit.u0271", displayName: "meter (m)" },
+            { unitId: "unit.u0159", displayName: "foot (ft)" },
+            { unitId: "unit.u0249", displayName: "kilometer (km)" },
           ],
         },
       ],
@@ -28,8 +38,11 @@ const catalog = {
           name: "Weight and Mass",
           slug: "weight-and-mass",
           units: [
-            { label: "kilogram (kg)", displayName: "kilogram", symbol: "kg" },
-            { label: "pound (lb)", displayName: "pound", symbol: "lb" },
+            { unitId: "unit.u0233", displayName: "kilogram (kg)" },
+            {
+              unitId: "unit.u0346",
+              displayName: "pound (avoirdupois) (lb)",
+            },
           ],
         },
       ],
@@ -42,15 +55,15 @@ test("groups favorites in catalog category and measure order", () => {
     {
       groupSlug: "mechanics-converters",
       converterSlug: "weight-and-mass",
-      fromUnit: "kilogram (kg)",
-      toUnit: "pound (lb)",
+      fromUnitId: "unit.u0233",
+      toUnitId: "unit.u0346",
       createdAt: "2026-07-19T12:02:00.000Z",
     },
     {
       groupSlug: "dimension-converters",
       converterSlug: "length",
-      fromUnit: "meter (m)",
-      toUnit: "foot (ft)",
+      fromUnitId: "unit.u0271",
+      toUnitId: "unit.u0159",
       createdAt: "2026-07-19T12:01:00.000Z",
     },
   ]);
@@ -71,7 +84,10 @@ test("groups favorites in catalog category and measure order", () => {
       {
         name: "Mechanics Converters",
         measures: [
-          { name: "Weight and Mass", pairs: ["kilogram (kg) → pound (lb)"] },
+          {
+            name: "Weight and Mass",
+            pairs: ["kilogram (kg) → pound (avoirdupois) (lb)"],
+          },
         ],
       },
     ],
@@ -79,17 +95,23 @@ test("groups favorites in catalog category and measure order", () => {
   assert.deepEqual(result.unavailable, []);
 });
 
-test("keeps stale or incompatible favorites in an unavailable group", () => {
+test("keeps stale favorites in an unavailable group", () => {
   const missingUnit = {
     groupSlug: "dimension-converters",
     converterSlug: "length",
-    fromUnit: "meter (m)",
-    toUnit: "missing unit",
+    fromUnitId: "unit.u0271",
+    toUnitId: "unit.u9999",
     createdAt: "2026-07-19T12:00:00.000Z",
   };
 
   const result = groupFavorites(catalog, [missingUnit]);
 
   assert.deepEqual(result.groups, []);
-  assert.deepEqual(result.unavailable, [missingUnit]);
+  assert.deepEqual(result.unavailable, [
+    {
+      ...missingUnit,
+      fromLabel: "meter (m)",
+      toLabel: "unit.u9999",
+    },
+  ]);
 });
